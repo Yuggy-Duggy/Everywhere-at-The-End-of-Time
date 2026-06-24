@@ -540,17 +540,11 @@ function drawDancers(s) {
   dancers.forEach((d, i) => {
     if (!d.alive) return;
 
-    // Update orbital waltz motion
-    d.phase += 0.007 * STAGES[sIdx].tempo * (1 + s.noise * 0.4);
+    // Update orbital waltz motion — base speed + any active boost
+    const baseSpeed = 0.007 * STAGES[sIdx].tempo * (1 + s.noise * 0.4);
+    d.boost = Math.max(0, (d.boost || 0) - 0.0008); // boost decays gradually
+    d.phase += baseSpeed + d.boost;
     d.glowing = Math.max(0, d.glowing - 0.018);
-
-    // Physics-based spin — angular velocity with friction
-    // Friction is lighter in early stages (cleaner spin), heavier in late stages (stumbling)
-    const friction = 0.96 - s.cs * 0.04; // 0.96 Stage I → 0.92 Stage VI
-    d.spinVel *= friction;
-    d.spinAngle += d.spinVel;
-    // Clamp accumulated angle drift to avoid floating point runaway
-    if (Math.abs(d.spinAngle) > Math.PI * 200) d.spinAngle = d.spinAngle % (Math.PI * 2);
 
     // Compute world position
     const ox = d.orbitR * W * Math.cos(d.phase + d.side * Math.PI);
@@ -577,9 +571,9 @@ function drawDancers(s) {
 
     ctx.save();
     ctx.translate(px, py);
-    // Natural waltz sway PLUS spin impulse angle
+    // Natural waltz sway only — spin is orbital, not axial
     const sway = Math.sin(gt * 0.85 + d.phase) * 0.04;
-    ctx.rotate(sway + d.spinAngle);
+    ctx.rotate(sway);
 
     const sh = BASE_H; // silhouette height ref
 
@@ -858,40 +852,29 @@ function handleClick(ex, ey) {
       case 'partial': {
         const d = hitDancer(ex, ey);
         if (d) {
-          d.clickCount++;
           d.glowing = 1.0;
 
-          // Determine spin direction — alternates each click for a "caught and reversed" feel
-          // Stage II: occasionally reverses unexpectedly
-          let dir = d.clickCount % 2 === 0 ? 1 : -1;
-          if (sIdx === 1 && Math.random() < 0.3) dir *= -1;
+          // Boost orbital speed — applied to both dancers in the pair
+          const boostAmt = 0.045 + Math.random() * 0.015;
+          dancers.forEach(other => {
+            if (other.cx === d.cx && other.cy === d.cy) { // same pair
+              other.boost = (other.boost || 0) + boostAmt;
+              // Stage II: boost occasionally fights itself — one partner gets less
+              if (sIdx === 1 && Math.random() < 0.3) other.boost *= 0.5;
+            }
+          });
 
-          // Impart angular velocity — Stage I: full clean spin, later stages weaker/chaotic
-          const baseVel = (0.18 + Math.random() * 0.08) * dir;
-          d.spinVel += baseVel * (1 - s.cs * 0.5);
-          d.spinDir = dir;
-
-          // Two concentric ripple rings for a ballroom twirl feel
           spawnRipple(ex, ey, 70,  0.55);
           spawnRipple(ex, ey, 130, 0.95);
 
-          // Stage-specific audio
           if (sIdx === 0) {
-            // Clean warm waltz chord
             playChord(ROOT * 2, [0, 4, 7, 12], 0.068, 2.2);
-          } else if (sIdx === 1) {
-            // Same chord but occasionally a wrong note sneaks in
+          } else {
             const semis = Math.random() < 0.25 ? [0, 3, 7, 11] : [0, 4, 7, 12];
             playChord(ROOT * 2, semis, 0.062, 2.0);
             if (Math.random() < 0.22) setTimeout(() => playNoiseBurst(0.08, 0.018), 600);
           }
-
-          // Stage II: spin sometimes stutters — velocity briefly reversed after 400ms
-          if (sIdx === 1 && Math.random() < 0.35) {
-            setTimeout(() => { d.spinVel *= -0.4; }, 400 + Math.random() * 300);
-          }
         } else {
-          // Miss — ambient floor tap
           spawnRipple(ex, ey, 55, 0.55);
           const semi = PENT[Math.floor(Math.random() * PENT.length)];
           playTone(semiHz(semi, ROOT * 2, s.pitch), 0.05, 1.3, 'sine', s.det * 0.3);
@@ -903,8 +886,8 @@ function handleClick(ex, ey) {
         const d2 = hitDancer(ex, ey);
         if (d2) {
           d2.glowing = 0.55;
-          // Stumble — wrong direction, weak
-          d2.spinVel += (Math.random() < 0.5 ? 1 : -1) * (0.06 + Math.random() * 0.05);
+          // Weak, unreliable boost
+          d2.boost = (d2.boost || 0) + 0.012 + Math.random() * 0.008;
         }
         spawnRipple(ex, ey, 45, 0.45);
         const wrongSemi = MOTIF[Math.floor(Math.random() * MOTIF.length)] - 3;
